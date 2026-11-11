@@ -108,8 +108,8 @@ function estado(v){ // v = [tipo, data]
 }
 function resumoPonto(p){
   // por etapa: vale a pior situação entre as faixas do ponto
-  let feitas=0,venc=0,sem=0,prev=0; const total=S.dados.etapas.length;
-  for(const e of S.dados.etapas){
+  let feitas=0,venc=0,sem=0,prev=0; const total=S.dados.etapas.filter(x=>x.tipo!=='serie').length;
+  for(const e of S.dados.etapas.filter(x=>x.tipo!=='serie')){
     const ss=p.faixas.map(f=>estado(f.v[e.col]).c);
     if(ss.includes('venc')) venc++; else if(ss.includes('sem')) sem++; else if(ss.includes('prev')) prev++; else feitas++;
   }
@@ -181,7 +181,7 @@ function telaPonto(id){
   let grupo='', html='';
   for(const e of S.dados.etapas){
     if(e.grupo!==grupo){ grupo=e.grupo; html+=`<div class="grupo">${esc(grupo)}</div>`; }
-    const st = p.faixas.map(f=>({f:f.f, s:estado(f.v[e.col])}));
+    const st = p.faixas.map(f=>({f:f.f, s:e.tipo==='serie'?((f.v[e.col]||[])[1]?{c:'ok',t:f.v[e.col][1]}:{c:'na',t:'Não informado'}):estado(f.v[e.col])}));
     const iguais = st.every(x=>x.s.t===st[0].s.t);
     const pe = pend.filter(x=>x.etapa===e.col).slice(-1)[0];
     html += `<div class="etapa" data-col="${e.col}"><div><div class="n">${esc(e.nome)}</div>
@@ -204,6 +204,7 @@ function modalLanc(col){
   const p=S.ponto, e=S.dados.etapas.find(x=>x.col===col);
   const placa = e.tipo==='placa';
   const nome = ls.get('pncv_nome','');
+  if(e.tipo==='serie') return modalSerie(p,e,nome);
   const fundo=document.createElement('div'); fundo.className='fundo-modal';
   fundo.innerHTML = `<div class="modal" role="dialog" aria-label="Lançar ${esc(e.nome)}">
    <h3>${esc(e.nome)}</h3><div class="s">BR-${esc(p.br)} km ${esc(p.km)} · ${esc(p.cod||p.et)}</div>
@@ -246,6 +247,40 @@ function modalLanc(col){
       const resumo = tp==='na'?'não se aplica':(tp==='realizado'?(placa?'OK':'realizado '+br(dt)):'previsto '+br(dt));
       const lista = ls.get('pncv_env_'+S.uf, []); lista.push({ponto:p.id, etapa:e.col, resumo:resumo+' ('+sel.map(f=>f.f).join(', ')+')', dia:hoje}); ls.set('pncv_env_'+S.uf, lista.slice(-300));
       fundo.querySelector('.modal').innerHTML = `<h3>Enviado ✔</h3><div class="ok-msg">${esc(e.nome)}: ${esc(resumo)}.<br>Entra na planilha na próxima atualização (dias úteis, de manhã).</div><button class="btn" id="fech">Fechar</button>`;
+      fundo.querySelector('#fech').onclick=()=>{fundo.remove();telaPonto(p.id);};
+    }catch(x){ bt.disabled=false; bt.textContent='Enviar'; err.textContent='Sem conexão. Tente de novo quando tiver sinal.'; }
+  };
+}
+
+function modalSerie(p,e,nome){
+  const fundo=document.createElement('div'); fundo.className='fundo-modal';
+  fundo.innerHTML = `<div class="modal" role="dialog" aria-label="Nº de série">
+   <h3>Nº de série</h3><div class="s">BR-${esc(p.br)} km ${esc(p.km)} · ${esc(p.cod||p.et)}</div>
+   <label for="sr">Número de série do equipamento</label><input id="sr" class="campo" autocomplete="off" autocapitalize="characters">
+   ${p.faixas.length>1?`<label>Faixas</label><div class="faixas">${p.faixas.map((f,i)=>`<label><input type="checkbox" value="${i}" checked> ${esc(f.f)}</label>`).join('')}</div>`:''}
+   <label for="nm">Seu nome</label><input id="nm" class="campo" value="${esc(nome)}" placeholder="Nome de quem está lançando">
+   <div class="erro" id="merr"></div>
+   <button class="btn" id="env">Enviar</button><button class="btn sec" id="canc">Cancelar</button></div>`;
+  document.body.appendChild(fundo);
+  const $=s=>fundo.querySelector(s);
+  $('#canc').onclick=()=>fundo.remove();
+  fundo.onclick=ev=>{if(ev.target===fundo)fundo.remove();};
+  $('#env').onclick=async()=>{
+    const sr=$('#sr').value.trim(), nm=$('#nm').value.trim(), err=$('#merr');
+    const sel = p.faixas.length>1 ? [...fundo.querySelectorAll('.faixas input:checked')].map(x=>p.faixas[+x.value]) : p.faixas;
+    if(!sr){err.textContent='Informe o número de série.';return}
+    if(!sel.length){err.textContent='Marque pelo menos uma faixa.';return}
+    if(!nm){err.textContent='Informe seu nome.';return}
+    ls.set('pncv_nome', nm);
+    const id = (crypto.randomUUID ? crypto.randomUUID() : Date.now()+'-'+Math.random().toString(16).slice(2));
+    const payload = {id, contrato:S.uf, codigo:S.codigo, ponto:p.id, cod:p.cod, et:p.et,
+      linhas:sel.map(f=>f.k), faixas:sel.map(f=>f.f), etapa:e.col, etapa_titulo:e.titulo, etapa_nome:e.nome,
+      tipo:'serie', serie:sr, data:'', nome:nm, enviado_em:new Date().toISOString()};
+    const bt=$('#env'); bt.disabled=true; bt.textContent='Enviando…';
+    try{
+      await fetch(ENVIO_URL, {method:'POST', mode:'no-cors', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:JSON.stringify(payload)});
+      const lista = ls.get('pncv_env_'+S.uf, []); lista.push({ponto:p.id, etapa:e.col, resumo:'série '+sr+' ('+sel.map(f=>f.f).join(', ')+')', dia:hoje}); ls.set('pncv_env_'+S.uf, lista.slice(-300));
+      fundo.querySelector('.modal').innerHTML = `<h3>Enviado ✔</h3><div class="ok-msg">Nº de série: ${esc(sr)}.<br>Entra na planilha na próxima atualização (dias úteis, de manhã).</div><button class="btn" id="fech">Fechar</button>`;
       fundo.querySelector('#fech').onclick=()=>{fundo.remove();telaPonto(p.id);};
     }catch(x){ bt.disabled=false; bt.textContent='Enviar'; err.textContent='Sem conexão. Tente de novo quando tiver sinal.'; }
   };
