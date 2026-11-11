@@ -68,9 +68,10 @@ label{display:block;font-size:14px;color:var(--sub);margin:10px 0 4px}
 <div id="app"></div>
 <script>
 /* Página de lançamentos de campo PNCV — GCT.
-   Os dados de cada contrato ficam criptografados (AES-GCM) com o código de acesso do contrato.
+   Acesso direto por contrato (sem código). Os arquivos de dados seguem no formato criptografado, com o código embutido aqui.
    Os lançamentos vão para a caixa de entrada (Google Apps Script); a rotina diária passa para a planilha. */
 const ENVIO_URL = 'https://script.google.com/macros/s/AKfycbwTgVIDKlACRppPXaro300xKq8Rytfo6b3aySNiqVM97lKclB3zT9yj2Ha2R1n6uWRvNw/exec';
+const CODIGOS = {BA:'ba26',CE:'ce26',MG:'mg26',PE:'pe26'}; // sem tela de código (pedido do Roberto, 11/11); o envio ainda valida o contrato
 const CONTRATOS = [['BA','PNCV - BA'],['CE','PNCV - CE'],['MG','PNCV - MG'],['PE','PNCV - PE']];
 const app = document.getElementById('app');
 const S = { uf:null, codigo:null, dados:null, filtro:'pend', busca:'', ponto:null };
@@ -118,30 +119,23 @@ function pendentes(){ return ls.get('pncv_env_'+S.uf, []).filter(x=>x.dia >= (S.
 
 /* ---------- telas ---------- */
 function telaEntrada(msg){
-  const ult = ls.get('pncv_ult', {});
-  S.uf = S.uf || ult.uf || null;
   app.innerHTML = `<div class="topo"><h1>PNCV · Lançamentos de campo</h1><small>GCT – Gerenciamento e Controle de Trânsito</small></div>
-  <div class="entrada"><h2>Entrar</h2><p>Escolha o contrato e digite o código de acesso.</p>
+  <div class="entrada"><h2>Contratos</h2><p>Toque no contrato para ver os pontos.</p>
   <div class="contratos">${CONTRATOS.map(([u,n])=>`<button data-uf="${u}" class="${S.uf===u?'on':''}">${n}</button>`).join('')}</div>
-  <label for="cod">Código de acesso</label><input id="cod" class="campo" autocomplete="off" autocapitalize="none" placeholder="ex.: ab12" value="${esc(ult.uf===S.uf?ult.codigo||'':'')}">
-  <button class="btn" id="ent">Entrar</button><div class="erro" id="err">${esc(msg||'')}</div></div>`;
-  app.querySelectorAll('.contratos button').forEach(b=>b.onclick=()=>{S.uf=b.dataset.uf;telaEntrada();});
-  const go = async()=>{
-    const cod = document.getElementById('cod').value; const err=document.getElementById('err');
-    if(!S.uf){err.textContent='Escolha o contrato.';return}
-    if(!cod.trim()){err.textContent='Digite o código de acesso.';return}
-    const bt=document.getElementById('ent'); bt.disabled=true; bt.textContent='Abrindo…';
-    try{ S.dados = await abrir(S.uf, cod); S.codigo=cod.trim().toLowerCase(); ls.set('pncv_ult',{uf:S.uf,codigo:S.codigo}); telaLista(); }
-    catch(e){ bt.disabled=false; bt.textContent='Entrar'; err.textContent=e.message; }
-  };
-  document.getElementById('ent').onclick=go;
-  document.getElementById('cod').onkeydown=e=>{if(e.key==='Enter')go()};
+  <div class="erro" id="err">${esc(msg||'')}</div></div>`;
+  app.querySelectorAll('.contratos button').forEach(b=>b.onclick=async()=>{
+    const uf=b.dataset.uf, err=document.getElementById('err');
+    app.querySelectorAll('.contratos button').forEach(x=>x.disabled=true);
+    const txt=b.textContent; b.textContent='Abrindo…';
+    try{ S.uf=uf; S.codigo=CODIGOS[uf]; S.dados = await abrir(uf, S.codigo); telaLista(); }
+    catch(e){ app.querySelectorAll('.contratos button').forEach(x=>x.disabled=false); b.textContent=txt; err.textContent=e.message; }
+  });
 }
 
 function telaLista(){
   S.ponto=null;
   const d=S.dados;
-  app.innerHTML = `<div class="topo"><h1>${esc(d.titulo)} <button class="sair" id="sair">Sair</button></h1>
+  app.innerHTML = `<div class="topo"><h1>${esc(d.titulo)} <button class="sair" id="sair">Contratos</button></h1>
     <small>Planilha atualizada em ${br(d.gerado_em)} · ${d.pontos.length} pontos</small>
     <div class="busca"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Pesquisar: BR, km, município, código ou ET" value="${esc(S.busca)}"></div></div>
@@ -195,7 +189,7 @@ function telaPonto(id){
       ${pe?`<div class="pend">Enviado: ${esc(pe.resumo)}</div>`:''}</div>
       ${iguais?`<span class="chip c-${st[0].s.c}">${esc(st[0].s.t)}</span>`:`<span class="chip c-na">Varia</span>`}</div>`;
   }
-  app.innerHTML = `<div class="topo"><h1>${esc(S.dados.titulo)} <button class="sair" id="sair">Sair</button></h1><small>Toque na etapa para lançar</small></div>
+  app.innerHTML = `<div class="topo"><h1>${esc(S.dados.titulo)} <button class="sair" id="sair">Contratos</button></h1><small>Toque na etapa para lançar</small></div>
   <div class="det-cab"><button class="voltar" id="volta">‹ Voltar à lista</button>
   <div class="t" style="font-weight:650">BR-${esc(p.br)} km ${esc(p.km)} · ${esc(p.mun)}</div>
   <div class="s" style="color:var(--sub);font-size:13px">${esc(p.cod||'sem código')} · ${esc(p.et)} · ${esc(p.tipo)} · faixas ${p.faixas.map(f=>esc(f.f)).join(', ')}</div></div>
